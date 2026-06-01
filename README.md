@@ -20,7 +20,7 @@ npm run dev
 - `POST /api/transactions`
 - `POST /api/campaigns`
 - `POST /api/campaign-items`
-- `POST /api/fees`
+- `GET /api/activity-admin/fund` (quỹ chung của Nhà trường/CLB/Hội SV)
 
 Các API tạo/sửa/xóa cần header:
 
@@ -37,4 +37,4 @@ Authorization: Bearer <token>
 - transactions
 - campaigns
 - campaign_items
-- fees
+- funds
