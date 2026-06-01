@@ -4,7 +4,7 @@ const Post = require("../models/Post");
 const Item = require("../models/Item");
 const Category = require("../models/Category");
 const { ok, fail } = require("../utils/apiResponse");
-const { mapCampaign, apiToType } = require("../utils/mappers");
+const { mapCampaign } = require("../utils/mappers");
 
 exports.getCampaigns = async (req, res) => {
   const campaigns = await Campaign.find().populate("organizerId", "fullName organizationName").sort({ createdAt: -1 });
@@ -41,7 +41,7 @@ exports.createCampaign = async (req, res) => {
       campaignName: name,
       organizer: body.organizer || req.user.organizationName || req.user.fullName,
       description: body.description || "",
-      campaignType: apiToType[type] || String(type).toLowerCase(),
+      campaignType: String(type).toLowerCase(),
       isFree: body.is_free ?? body.isFree ?? true,
       cover: body.cover || "STUDY",
       startDate: start,
@@ -65,7 +65,7 @@ exports.updateCampaign = async (req, res) => {
   if (b.name || b.campaignName) campaign.campaignName = b.name || b.campaignName;
   if (b.description !== undefined) campaign.description = b.description;
   if (b.organizer !== undefined) campaign.organizer = b.organizer;
-  if (b.type || b.campaignType) campaign.campaignType = apiToType[b.type || b.campaignType] || String(b.type || b.campaignType).toLowerCase();
+  if (b.type || b.campaignType) campaign.campaignType = String(b.type || b.campaignType).toLowerCase();
   if (b.is_free !== undefined || b.isFree !== undefined) campaign.isFree = b.is_free ?? b.isFree;
   if (b.start || b.startDate) campaign.startDate = b.start || b.startDate;
   if (b.end || b.endDate) campaign.endDate = b.end || b.endDate;
