@@ -138,7 +138,18 @@ exports.removePost = async (req, res) => {
   const post = await Post.findById(req.params.postId || req.params.id);
   if (!post) return fail(res, 404, "NOT_FOUND", "Post not found");
   if (post.postStatus === "completed") return fail(res, 400, "INVALID_STATE", "Cannot remove completed post");
-  if (String(post.memberId) !== String(req.user._id) && req.user.role !== "super_admin") return fail(res, 403, "FORBIDDEN", "Forbidden");
+
+  const isOwner = String(post.memberId) === String(req.user._id);
+  const isSuperAdmin = req.user.role === "super_admin";
+  let isActivityAdminOfCampaign = false;
+  if (req.user.role === "activity_admin" && post.campaignId) {
+    const campaign = await Campaign.findOne({ _id: post.campaignId, organizerId: req.user._id });
+    isActivityAdminOfCampaign = !!campaign;
+  }
+
+  if (!isOwner && !isSuperAdmin && !isActivityAdminOfCampaign) {
+    return fail(res, 403, "FORBIDDEN", "Forbidden");
+  }
 
   post.postStatus = "removed";
   post.removeReason = req.body.reason || null;
@@ -148,13 +159,45 @@ exports.removePost = async (req, res) => {
   return ok(res, { id: String(post._id), status: "Removed", reason: post.removeReason });
 };
 
-exports.adminPending = async (req, res) => ok(res, await hydratePosts({ postStatus: "pending" }, req.query));
+// Build filter for activity_admin: only posts from campaigns they own.
+async function activityAdminCampaignFilter(user) {
+  const campaigns = await Campaign.find({ organizerId: user._id }).select("_id");
+  return campaigns.map((c) => c._id);
+}
 
-exports.adminPosts = async (req, res) => ok(res, await hydratePosts({}, req.query));
+exports.adminPending = async (req, res) => {
+  const filter = { postStatus: "pending" };
+  if (req.user.role === "activity_admin") {
+    filter.campaignId = { $in: await activityAdminCampaignFilter(req.user) };
+  }
+  return ok(res, await hydratePosts(filter, req.query));
+};
+
+exports.adminPosts = async (req, res) => {
+  const filter = {};
+  if (req.user.role === "activity_admin") {
+    filter.campaignId = { $in: await activityAdminCampaignFilter(req.user) };
+  }
+  return ok(res, await hydratePosts(filter, req.query));
+};
+
+async function requireCampaignPostAccess(postId, user) {
+  const post = await Post.findById(postId);
+  if (!post) return { error: fail, code: "NOT_FOUND", message: "Post not found" };
+
+  if (user.role === "activity_admin") {
+    if (!post.campaignId) return { error: fail, code: "FORBIDDEN", message: "Not a campaign post" };
+    const campaign = await Campaign.findOne({ _id: post.campaignId, organizerId: user._id });
+    if (!campaign) return { error: fail, code: "FORBIDDEN", message: "Not your campaign post" };
+  }
+  return { post };
+}
 
 exports.approvePost = async (req, res) => {
-  const post = await Post.findById(req.params.postId);
-  if (!post) return fail(res, 404, "NOT_FOUND", "Post not found");
+  const result = await requireCampaignPostAccess(req.params.postId, req.user);
+  if (result.error) return result.error(res, 403, result.code, result.message);
+
+  const post = result.post;
   post.postStatus = "approved";
   post.moderatorId = req.user._id;
   post.rejectReason = null;
@@ -170,8 +213,10 @@ exports.rejectPost = async (req, res) => {
   const { reason } = req.body;
   if (!reason) return fail(res, 400, "VALIDATION_ERROR", "reason is required");
 
-  const post = await Post.findById(req.params.postId);
-  if (!post) return fail(res, 404, "NOT_FOUND", "Post not found");
+  const result = await requireCampaignPostAccess(req.params.postId, req.user);
+  if (result.error) return result.error(res, 403, result.code, result.message);
+
+  const post = result.post;
   if (post.postStatus !== "pending") return fail(res, 400, "INVALID_STATE", "Only pending post can be rejected");
 
   post.postStatus = "rejected";
@@ -184,6 +229,11 @@ exports.rejectPost = async (req, res) => {
 
 exports.adminRemove = async (req, res) => {
   if (!req.body.reason) return fail(res, 400, "VALIDATION_ERROR", "reason is required");
+
+  const result = await requireCampaignPostAccess(req.params.postId, req.user);
+  if (result.error) return result.error(res, 403, result.code, result.message);
+
+  req.params.id = req.params.postId;
   return exports.removePost(req, res);
 };
 
