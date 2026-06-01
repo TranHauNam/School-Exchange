@@ -58,7 +58,7 @@ exports.approveCampaignPost = async (req, res) => {
 };
 
 exports.rejectCampaignPost = async (req, res) => {
-  const { reason } = req.body;
+  const reason = req.body && req.body.reason;
   if (!reason) return fail(res, 400, "VALIDATION_ERROR", "reason is required");
 
   const post = await ownCampaignPost(req);

@@ -127,12 +127,15 @@ exports.submitToCampaign = async (req, res) => {
   } else {
     const cat = await Category.findOne({ status: "active" });
     if (!cat) return fail(res, 400, "VALIDATION_ERROR", "No active category exists");
+    const rawImageName = req.body.imageName || "";
+    const isBase64 = rawImageName.startsWith("data:") || rawImageName.length > 200;
+    const fakeImageName = isBase64 ? "IMAGE" : (rawImageName || "");
     post = await Post.create({
       memberId: req.user._id,
       title: req.body.content.slice(0, 60),
       description: req.body.content,
       content: req.body.content,
-      imageName: req.body.imageName || "",
+      imageName: fakeImageName,
       contact: req.user.email,
       postType: "donate",
       campaignId: campaign._id,
@@ -144,7 +147,7 @@ exports.submitToCampaign = async (req, res) => {
       itemName: post.title,
       itemDescription: req.body.content,
       price: 0,
-      imageUrl: req.body.imageName ? [req.body.imageName] : []
+      imageUrl: fakeImageName ? [fakeImageName] : []
     });
   }
 

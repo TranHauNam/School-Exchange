@@ -65,6 +65,11 @@ exports.createPost = async (req, res) => {
     if (!imageName && !req.body.imageUrl) return fail(res, 400, "VALIDATION_ERROR", "imageName is required");
     if (!contact) return fail(res, 400, "VALIDATION_ERROR", "contact is required");
 
+    // Fake image: keep imageName if it looks like a filename, otherwise use placeholder.
+    // Base64 strings are too large for MongoDB storage; real image server not yet available.
+    const isBase64 = imageName && (imageName.startsWith("data:") || imageName.length > 200);
+    const resolvedImageName = isBase64 ? "IMAGE" : (imageName || "IMAGE");
+
     const finalType = apiToType[type] || postType;
     if (!["sell", "exchange", "donate"].includes(finalType)) return fail(res, 400, "VALIDATION_ERROR", "Invalid type");
 
@@ -80,7 +85,7 @@ exports.createPost = async (req, res) => {
       description: description || content,
       content: content || description,
       contact,
-      imageName,
+      imageName: resolvedImageName,
       postType: finalType,
       campaignId: campaignId || null,
       postStatus: "pending"
@@ -92,7 +97,7 @@ exports.createPost = async (req, res) => {
       itemName: title || (content || description).slice(0, 60),
       itemDescription: description || content,
       price: finalType === "sell" ? Number(price || 0) : 0,
-      imageUrl: imageName ? [imageName] : (req.body.imageUrl || []),
+      imageUrl: resolvedImageName ? [resolvedImageName] : (req.body.imageUrl || []),
       itemStatus: "available"
     });
 
@@ -119,9 +124,13 @@ exports.updatePost = async (req, res) => {
   if (!post) return fail(res, 404, "NOT_FOUND", "Post not found");
   if (String(post.memberId) !== String(req.user._id) && req.user.role !== "super_admin") return fail(res, 403, "FORBIDDEN", "Forbidden");
 
-  ["title", "description", "content", "contact", "imageName"].forEach(k => {
+  ["title", "description", "content", "contact"].forEach(k => {
     if (req.body[k] !== undefined) post[k] = req.body[k];
   });
+  if (req.body.imageName !== undefined) {
+    const isBase64 = req.body.imageName.startsWith("data:") || req.body.imageName.length > 200;
+    post.imageName = isBase64 ? "IMAGE" : req.body.imageName;
+  }
   if (req.body.type) post.postType = apiToType[req.body.type] || post.postType;
   if (req.user.role === "member") post.postStatus = "pending";
   await post.save();
@@ -135,28 +144,32 @@ async function hydratePostById(id) {
 }
 
 exports.removePost = async (req, res) => {
-  const post = await Post.findById(req.params.postId || req.params.id);
-  if (!post) return fail(res, 404, "NOT_FOUND", "Post not found");
-  if (post.postStatus === "completed") return fail(res, 400, "INVALID_STATE", "Cannot remove completed post");
+  try {
+    const post = await Post.findById(req.params.postId || req.params.id);
+    if (!post) return fail(res, 404, "NOT_FOUND", "Post not found");
+    if (post.postStatus === "completed") return fail(res, 400, "INVALID_STATE", "Cannot remove completed post");
 
-  const isOwner = String(post.memberId) === String(req.user._id);
-  const isSuperAdmin = req.user.role === "super_admin";
-  let isActivityAdminOfCampaign = false;
-  if (req.user.role === "activity_admin" && post.campaignId) {
-    const campaign = await Campaign.findOne({ _id: post.campaignId, organizerId: req.user._id });
-    isActivityAdminOfCampaign = !!campaign;
+    const isOwner = String(post.memberId) === String(req.user._id);
+    const isSuperAdmin = req.user.role === "super_admin";
+    let isActivityAdminOfCampaign = false;
+    if (req.user.role === "activity_admin" && post.campaignId) {
+      const campaign = await Campaign.findOne({ _id: post.campaignId, organizerId: req.user._id });
+      isActivityAdminOfCampaign = !!campaign;
+    }
+
+    if (!isOwner && !isSuperAdmin && !isActivityAdminOfCampaign) {
+      return fail(res, 403, "FORBIDDEN", "Forbidden");
+    }
+
+    post.postStatus = "removed";
+    post.removeReason = (req.body && req.body.reason) || null;
+    await post.save();
+    await Item.updateMany({ postId: post._id }, { itemStatus: "removed" });
+
+    return ok(res, { id: String(post._id), status: "Removed", reason: post.removeReason });
+  } catch (error) {
+    return fail(res, 500, "SERVER_ERROR", error.message);
   }
-
-  if (!isOwner && !isSuperAdmin && !isActivityAdminOfCampaign) {
-    return fail(res, 403, "FORBIDDEN", "Forbidden");
-  }
-
-  post.postStatus = "removed";
-  post.removeReason = req.body.reason || null;
-  await post.save();
-  await Item.updateMany({ postId: post._id }, { itemStatus: "removed" });
-
-  return ok(res, { id: String(post._id), status: "Removed", reason: post.removeReason });
 };
 
 // Build filter for activity_admin: only posts from campaigns they own.
@@ -210,7 +223,7 @@ exports.approvePost = async (req, res) => {
 };
 
 exports.rejectPost = async (req, res) => {
-  const { reason } = req.body;
+  const reason = req.body && req.body.reason;
   if (!reason) return fail(res, 400, "VALIDATION_ERROR", "reason is required");
 
   const result = await requireCampaignPostAccess(req.params.postId, req.user);
@@ -228,7 +241,7 @@ exports.rejectPost = async (req, res) => {
 };
 
 exports.adminRemove = async (req, res) => {
-  if (!req.body.reason) return fail(res, 400, "VALIDATION_ERROR", "reason is required");
+  if (!req.body || !req.body.reason) return fail(res, 400, "VALIDATION_ERROR", "reason is required");
 
   const result = await requireCampaignPostAccess(req.params.postId, req.user);
   if (result.error) return result.error(res, 403, result.code, result.message);
