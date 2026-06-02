@@ -53,6 +53,29 @@ async function mapPost(post, item = null, category = null, campaign = null) {
   const cat = category || i?.categoryId || null;
   const camp = campaign || p.campaignId || null;
 
+  // Build items array (fetch all items for this post)
+  let items = [];
+  try {
+    const Item = require("../models/Item");
+    const allItems = await Item.find({ postId: p._id }).populate("categoryId", "categoryName");
+    items = allItems.map((it) => ({
+      name: it.itemName,
+      category: it.categoryId?.categoryName || "",
+      price: it.price || 0,
+      condition: it.condition || "used_good",
+      imageName: (it.imageUrl && it.imageUrl.length > 0) ? it.imageUrl[0] : "",
+    }));
+  } catch (_) {
+    // Fallback: use single item
+    items = [{
+      name: i?.itemName || p.title,
+      category: cat?.categoryName || "",
+      price: i?.price ?? 0,
+      condition: i?.condition || "used_good",
+      imageName: (i?.imageUrl && i.imageUrl.length > 0) ? i.imageUrl[0] : "",
+    }];
+  }
+
   return {
     id: String(p._id),
     title: p.title,
@@ -69,7 +92,8 @@ async function mapPost(post, item = null, category = null, campaign = null) {
     content: p.content || p.description,
     description: i?.itemDescription || p.description || "",
     contact: p.contact || owner?.email || "",
-    reason: p.rejectReason || p.removeReason || null
+    reason: p.rejectReason || p.removeReason || null,
+    items
   };
 }
 

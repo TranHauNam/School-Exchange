@@ -24,6 +24,7 @@ app.use("/api/campaigns", require("./routes/campaignRoutes"));
 app.use("/api/admin/campaigns", require("./routes/adminCampaignRoutes"));
 app.use("/api/activity-admin", require("./routes/activityAdminRoutes"));
 app.use("/api/admin/reports", require("./routes/adminReportRoutes"));
+app.use("/api/payments", require("./routes/paymentRoutes"));
 
 app.use((req, res) => res.status(404).json({ success: false, code: "NOT_FOUND", message: "Route not found" }));
 

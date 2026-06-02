@@ -59,61 +59,94 @@ exports.getPostById = async (req, res) => {
 
 exports.createPost = async (req, res) => {
   try {
-    const { title, content, description, imageName, type, postType, price = 0, category, categoryId, contact, campaignId } = req.body;
+    const { title, content, description, type, postType, contact, campaignId, items } = req.body;
 
     if (!content && !description) return fail(res, 400, "VALIDATION_ERROR", "content is required");
-    if (!imageName && !req.body.imageUrl) return fail(res, 400, "VALIDATION_ERROR", "imageName is required");
     if (!contact) return fail(res, 400, "VALIDATION_ERROR", "contact is required");
 
-    // Fake image: keep imageName if it looks like a filename, otherwise use placeholder.
-    // Base64 strings are too large for MongoDB storage; real image server not yet available.
-    const isBase64 = imageName && (imageName.startsWith("data:") || imageName.length > 200);
-    const resolvedImageName = isBase64 ? "IMAGE" : (imageName || "IMAGE");
+    // Require at least 1 item
+    const itemsArray = items || [];
+    if (!Array.isArray(itemsArray) || itemsArray.length === 0) {
+      // Fallback: old-style single-item post
+      const { imageName, price = 0, category, categoryId } = req.body;
+      if (!imageName && !req.body.imageUrl) return fail(res, 400, "VALIDATION_ERROR", "items array or imageName is required");
+      // Push a single item from old fields
+      itemsArray.push({
+        name: title || (content || description || "").slice(0, 60),
+        category: category || "",
+        categoryId: categoryId || null,
+        price: price,
+        condition: "used_good",
+        imageName: imageName || "",
+      });
+    }
 
     const finalType = apiToType[type] || postType;
     if (!["sell", "exchange", "donate"].includes(finalType)) return fail(res, 400, "VALIDATION_ERROR", "Invalid type");
 
-    let cat = null;
-    if (categoryId) cat = await Category.findById(categoryId);
-    else cat = await Category.findOne({ categoryName: category, status: "active" });
+    // Validate & resolve categories for each item
+    const resolvedItems = [];
+    for (const item of itemsArray) {
+      let cat = null;
+      if (item.categoryId) cat = await Category.findById(item.categoryId);
+      else cat = await Category.findOne({ categoryName: item.category, status: "active" });
+      if (!cat || cat.status !== "active") return fail(res, 400, "VALIDATION_ERROR", `Category "${item.category || item.categoryId}" must be active`);
 
-    if (!cat || cat.status !== "active") return fail(res, 400, "VALIDATION_ERROR", "Category must be active");
+      // Handle base64 image -> replace with placeholder
+      const isBase64 = item.imageName && (item.imageName.startsWith("data:") || item.imageName.length > 200);
+      const resolvedImage = isBase64 ? "IMAGE" : (item.imageName || "");
+
+      resolvedItems.push({
+        categoryId: cat._id,
+        itemName: item.name || "Sản phẩm mới",
+        itemDescription: item.description || content || "",
+        price: finalType === "sell" ? Number(item.price || 0) : 0,
+        condition: item.condition || "used_good",
+        imageUrl: resolvedImage ? [resolvedImage] : [],
+      });
+    }
 
     const post = await Post.create({
       memberId: req.user._id,
-      title: title || (content || description).slice(0, 60),
+      title: title || (itemsArray[0]?.name || (content || description || "").slice(0, 60)),
       description: description || content,
       content: content || description,
       contact,
-      imageName: resolvedImageName,
+      imageName: resolvedItems[0]?.imageUrl?.[0] || "IMAGE",
       postType: finalType,
       campaignId: campaignId || null,
       postStatus: "pending"
     });
 
-    const item = await Item.create({
-      postId: post._id,
-      categoryId: cat._id,
-      itemName: title || (content || description).slice(0, 60),
-      itemDescription: description || content,
-      price: finalType === "sell" ? Number(price || 0) : 0,
-      imageUrl: resolvedImageName ? [resolvedImageName] : (req.body.imageUrl || []),
-      itemStatus: "available"
-    });
+    // Create an Item for each resolved item
+    const createdItems = [];
+    for (const ri of resolvedItems) {
+      const created = await Item.create({
+        postId: post._id,
+        categoryId: ri.categoryId,
+        itemName: ri.itemName,
+        itemDescription: ri.itemDescription,
+        price: ri.price,
+        condition: ri.condition,
+        imageUrl: ri.imageUrl,
+        itemStatus: "available"
+      });
+      createdItems.push(created);
 
-    if (campaignId) {
-      await CampaignItem.create({
-        campaignId,
-        itemId: item._id,
-        memberId: req.user._id,
-        description: req.body.note || "",
-        status: "pending"
-      }).catch(() => null);
+      if (campaignId) {
+        await CampaignItem.create({
+          campaignId,
+          itemId: created._id,
+          memberId: req.user._id,
+          description: req.body.note || "",
+          status: "pending"
+        }).catch(() => null);
+      }
     }
 
     const populatedPost = await Post.findById(post._id).populate("memberId", "fullName email role userType").populate("campaignId", "campaignName");
-    const populatedItem = await Item.findById(item._id).populate("categoryId", "categoryName");
-    return ok(res, await mapPost(populatedPost, populatedItem, populatedItem.categoryId, populatedPost.campaignId), 201);
+    const populatedItems = await Item.find({ postId: post._id }).populate("categoryId", "categoryName");
+    return ok(res, await mapPost(populatedPost, populatedItems[0], populatedItems[0]?.categoryId, populatedPost.campaignId), 201);
   } catch (error) {
     return fail(res, 400, "BAD_REQUEST", error.message);
   }

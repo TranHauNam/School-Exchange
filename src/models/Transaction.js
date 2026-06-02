@@ -24,7 +24,21 @@ const transactionSchema = new mongoose.Schema({
   message: { type: String, default: "" },
   contact: { type: String, default: "" },
   exchangeItemDescription: { type: String, default: null },
-  transactionDate: { type: Date, default: Date.now }
+  transactionDate: { type: Date, default: Date.now },
+
+  // Payment fields (added for Payment Gateway feature)
+  paymentMethod: {
+    type: String,
+    enum: ["simulated", "vnpay", "momo", "zalopay"],
+    default: null
+  },
+  paymentStatus: {
+    type: String,
+    enum: ["unpaid", "paid", "refunded"],
+    default: "unpaid"
+  },
+  paymentDate: { type: Date, default: null },
+  fee: { type: Number, default: 0 }
 }, { timestamps: true });
 
 module.exports = mongoose.model("Transaction", transactionSchema, "transactions");

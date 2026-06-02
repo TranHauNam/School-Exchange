@@ -162,10 +162,28 @@ describe("Requests API", () => {
   // POST /api/requests/:requestId/complete
   // ---------------------------------------------------------------------------
   describe("POST /api/requests/:requestId/complete", () => {
-    it("should complete an accepted request", async () => {
+    it("should complete an accepted Exchange request", async () => {
+      // Create an Exchange post (Sale must go through payment flow)
+      await seedCategory();
+      const exCreated = await post(
+        "/api/posts",
+        {
+          title: "Exchange Post",
+          content: "Exchange content",
+          imageName: "test.jpg",
+          type: "Exchange",
+          price: 0,
+          category: "Sách giáo khoa",
+          contact: "test@school.edu",
+        },
+        { token: memberToken },
+      );
+      const exPostId = exCreated.body.data.id;
+      await post(`/api/admin/posts/${exPostId}/approve`, {}, { token: adminToken });
+
       const reqRes = await post(
-        `/api/posts/${postId}/requests`,
-        { message: "I want this", contact: "buyer@school.edu" },
+        `/api/posts/${exPostId}/requests`,
+        { message: "I want to exchange", contact: "buyer@school.edu" },
         { token: buyerToken },
       );
       const requestId = reqRes.body.data.id;
@@ -175,6 +193,21 @@ describe("Requests API", () => {
       const res = await post(`/api/requests/${requestId}/complete`, {}, { token: memberToken });
       expect(res.status).toBe(200);
       expect(res.body.data.status).toBe("Completed");
+    });
+
+    it("should reject complete for Sale (must use payment flow)", async () => {
+      const reqRes = await post(
+        `/api/posts/${postId}/requests`,
+        { message: "I want this", contact: "buyer@school.edu" },
+        { token: buyerToken },
+      );
+      const requestId = reqRes.body.data.id;
+
+      await post(`/api/requests/${requestId}/accept`, {}, { token: memberToken });
+
+      // Complete should fail because Sale must go through payment
+      const res = await post(`/api/requests/${requestId}/complete`, {}, { token: memberToken });
+      expect(res.status).toBe(400);
     });
 
     it("should not complete a pending request", async () => {
@@ -195,7 +228,7 @@ describe("Requests API", () => {
   // GET /api/requests/completed
   // ---------------------------------------------------------------------------
   describe("GET /api/requests/completed", () => {
-    it("should return completed requests", async () => {
+    it("should return completed requests (via payment for Sale)", async () => {
       const reqRes = await post(
         `/api/posts/${postId}/requests`,
         { message: "Complete me", contact: "buyer@school.edu" },
@@ -204,7 +237,9 @@ describe("Requests API", () => {
       const requestId = reqRes.body.data.id;
 
       await post(`/api/requests/${requestId}/accept`, {}, { token: memberToken });
-      await post(`/api/requests/${requestId}/complete`, {}, { token: memberToken });
+
+      // Complete Sale via payment flow
+      await post(`/api/payments/confirm/${requestId}`, { paymentMethod: "simulated" }, { token: buyerToken });
 
       const res = await get("/api/requests/completed", { token: memberToken });
       expect(res.status).toBe(200);

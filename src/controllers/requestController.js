@@ -52,11 +52,16 @@ exports.complete = async (req, res) => {
   if (String(tx.ownerId) !== String(req.user._id)) return fail(res, 403, "FORBIDDEN", "Only receiver can complete request");
   if (tx.transactionStatus !== "accepted") return fail(res, 400, "INVALID_STATE", "Request must be accepted");
 
+  // Sell transactions must go through the payment flow instead
+  if (tx.transactionType === "sell") {
+    return fail(res, 400, "INVALID_STATE", "Sale transactions must be completed via payment. The buyer needs to checkout and pay first.");
+  }
+
   tx.transactionStatus = "completed";
 
   const item = await Item.findById(tx.itemId);
   if (item) {
-    item.itemStatus = tx.transactionType === "sell" ? "sold" : tx.transactionType === "exchange" ? "exchanged" : "donated";
+    item.itemStatus = tx.transactionType === "exchange" ? "exchanged" : "donated";
     await item.save();
   }
 
